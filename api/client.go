@@ -134,6 +134,9 @@ func CheckResponse(r *http.Response) error {
 	errorResponse := &ErrorResponse{Response: r}
 	data, err := ioutil.ReadAll(r.Body)
 	if err == nil && data != nil {
+		if strings.Contains(r.Header.Get("Content-Type"), "text/plan") {
+			return fmt.Errorf(string(data))
+		}
 		json.Unmarshal(data, errorResponse)
 	}
 	return errorResponse
