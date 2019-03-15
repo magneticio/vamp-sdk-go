@@ -1,4 +1,4 @@
-package vamp
+package api
 
 import (
 	"bytes"
