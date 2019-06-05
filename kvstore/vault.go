@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/hashicorp/vault/api"
-	vault "github.com/hashicorp/vault/api"
 	"github.com/magneticio/forklift/logging"
 )
 
@@ -18,7 +17,7 @@ type VaultKeyValueStore struct {
 	URL    string
 	Token  string
 	Params map[string]string
-	Client *vault.Client
+	Client *api.Client
 }
 
 func NewVaultKeyValueStore(address string, token string, params map[string]string) (*VaultKeyValueStore, error) {
@@ -31,7 +30,7 @@ func NewVaultKeyValueStore(address string, token string, params map[string]strin
 		return nil, configErr
 	}
 
-	client, err := vault.NewClient(config)
+	client, err := api.NewClient(config)
 	if err != nil {
 		logging.Error("Error initialising client %v\n", err.Error())
 		return nil, err
@@ -101,8 +100,8 @@ func (c *VaultKeyValueStore) List(key string) ([]string, error) {
 	return nil, errors.New("List is not available for path: " + key)
 }
 
-func getConfig(address, cert, key, caCert string) (*vault.Config, error) {
-	conf := vault.DefaultConfig()
+func getConfig(address, cert, key, caCert string) (*api.Config, error) {
+	conf := api.DefaultConfig()
 	conf.Address = address
 
 	tlsConfig := &tls.Config{}
@@ -132,7 +131,7 @@ func getConfig(address, cert, key, caCert string) (*vault.Config, error) {
 	return conf, nil
 }
 
-func (c *VaultKeyValueStore) getClient() *vault.Client {
+func (c *VaultKeyValueStore) getClient() *api.Client {
 	// TODO: This will check for token renewal
 	return c.Client
 }
