@@ -263,35 +263,35 @@ func (events *Events) Close() {
 }
 
 // Options builder
-func (events *Events) SubscriptionAcknowledgeWait(duration time.Duration) func(options *SubscriptionOptions) error {
+func SubscriptionAcknowledgeWait(duration time.Duration) func(options *SubscriptionOptions) error {
 	return func(options *SubscriptionOptions) error {
 		options.AcknowledgeWait = duration
 		return nil
 	}
 }
 
-func (events *Events) SubscriptionAcknowledgeAutomatic() func(options *SubscriptionOptions) error {
+func SubscriptionAcknowledgeAutomatic() func(options *SubscriptionOptions) error {
 	return func(options *SubscriptionOptions) error {
 		options.AcknowledgeAutomatic = true
 		return nil
 	}
 }
 
-func (events *Events) SubscriptionName(name string) func(options *SubscriptionOptions) error {
+func SubscriptionName(name string) func(options *SubscriptionOptions) error {
 	return func(options *SubscriptionOptions) error {
 		options.Name = name
 		return nil
 	}
 }
 
-func (events *Events) SubscriptionUseQueue() func(options *SubscriptionOptions) error {
+func SubscriptionUseQueue() func(options *SubscriptionOptions) error {
 	return func(options *SubscriptionOptions) error {
 		options.UseQueue = true
 		return nil
 	}
 }
 
-func (events *Events) SubscriptionUseDurability(unsubscribe bool) func(options *SubscriptionOptions) error {
+func SubscriptionUseDurability(unsubscribe bool) func(options *SubscriptionOptions) error {
 	return func(options *SubscriptionOptions) error {
 		options.IsDurable = true
 		options.UnsubscribeOnClose = unsubscribe
@@ -299,35 +299,35 @@ func (events *Events) SubscriptionUseDurability(unsubscribe bool) func(options *
 	}
 }
 
-func (events *Events) SubscriptionMaxInflight(inflight int) func(options *SubscriptionOptions) error {
+func SubscriptionMaxInflight(inflight int) func(options *SubscriptionOptions) error {
 	return func(options *SubscriptionOptions) error {
 		options.MaxInflight = inflight
 		return nil
 	}
 }
 
-func (events *Events) SubscriptionStartAtNew() func(options *SubscriptionOptions) error {
+func SubscriptionStartAtNew() func(options *SubscriptionOptions) error {
 	return func(options *SubscriptionOptions) error {
 		options.StartPosition = StartPosition_NewOnly
 		return nil
 	}
 }
 
-func (events *Events) SubscriptionStartAtBeginning() func(options *SubscriptionOptions) error {
+func SubscriptionStartAtBeginning() func(options *SubscriptionOptions) error {
 	return func(options *SubscriptionOptions) error {
 		options.StartPosition = StartPosition_First
 		return nil
 	}
 }
 
-func (events *Events) SubscriptionStartAtLastReceived() func(options *SubscriptionOptions) error {
+func SubscriptionStartAtLastReceived() func(options *SubscriptionOptions) error {
 	return func(options *SubscriptionOptions) error {
 		options.StartPosition = StartPosition_LastReceived
 		return nil
 	}
 }
 
-func (events *Events) SubscriptionStartAtTime(time time.Time) func(options *SubscriptionOptions) error {
+func SubscriptionStartAtTime(time time.Time) func(options *SubscriptionOptions) error {
 	return func(options *SubscriptionOptions) error {
 		options.StartTime = time
 		options.StartPosition = StartPosition_TimeDeltaStart
@@ -335,7 +335,7 @@ func (events *Events) SubscriptionStartAtTime(time time.Time) func(options *Subs
 	}
 }
 
-func (events *Events) SubscriptionStartAtTimeDelta(ago time.Duration) func(options *SubscriptionOptions) error {
+func SubscriptionStartAtTimeDelta(ago time.Duration) func(options *SubscriptionOptions) error {
 	return func(options *SubscriptionOptions) error {
 		options.StartTime = time.Now().Add(-ago)
 		options.StartPosition = StartPosition_TimeDeltaStart
