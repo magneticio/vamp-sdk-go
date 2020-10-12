@@ -341,8 +341,8 @@ func (c *VaultKeyValueStore) ListData(key string) (map[string]interface{}, error
 		return nil, listError
 	}
 	if secret == nil || secret.Data == nil {
-		log.Error(fmt.Sprintf("No value found at %s", path))
-		return nil, fmt.Errorf("No value found at %s", path)
+		log.Debugf(fmt.Sprintf("No value found at %s", path))
+		return map[string]interface{}{}, nil
 	}
 
 	// If the secret is wrapped, return the wrapped response.
