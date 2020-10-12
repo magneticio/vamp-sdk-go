@@ -8,8 +8,8 @@ GOCMD	:= go
 GOBUILD := $(GOCMD) build
 GOTEST 	:= $(GOCMD)	test
 
-.PHONY: test-unit
-test-unit:
+.PHONY: test
+test:
 	$(GOTEST) ./...
 
 .PHONY: test-integration
