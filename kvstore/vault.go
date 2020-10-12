@@ -3,7 +3,6 @@ package kvstore
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -24,18 +23,16 @@ type VaultKeyValueStore struct {
 
 func NewVaultKeyValueStore(address string, token string, params map[string]string) (*VaultKeyValueStore, error) {
 
-	log.Info("Initialising Vault Client with address %v\n", address)
+	log.Infof("Initialising Vault Client with address %s", address)
 
 	config, configErr := getConfig(address, params["cert"], params["key"], params["caCert"])
 	if configErr != nil {
-		log.Error("Error getting config %v\n", configErr.Error())
-		return nil, configErr
+		return nil, fmt.Errorf("error getting config: %v", configErr)
 	}
 
 	client, err := api.NewClient(config)
 	if err != nil {
-		log.Error("Error initialising client %v\n", err.Error())
-		return nil, err
+		return nil, fmt.Errorf("error initialising client: %v", err)
 	}
 
 	client.SetToken(token)
@@ -69,24 +66,20 @@ func (c *VaultKeyValueStore) Exists(key string) (bool, error) {
 }
 
 func (c *VaultKeyValueStore) Delete(keyName string) error {
-	log.Info("Deleting from Vault key %v\n", keyName)
 	err := c.DeleteData(fixPath(keyName), nil) // nil mean versions are not defined
 	if err != nil {
-		log.Error("Error while deleting from Vault key %v - %v\n", keyName, err.Error())
-		return err
+		return fmt.Errorf("error while deleting from Vault key '%s': %v", keyName, err)
 	}
 	return nil
 }
 
 func (c *VaultKeyValueStore) List(key string) ([]string, error) {
-	log.Info("Getting list from Vault with key %v\n", key)
 	secretData, listErr := c.ListData(fixPath(key))
 	if listErr != nil {
-		log.Error("Error while getting list from Vault with key %v - %v\n", key, listErr.Error())
-		return nil, listErr
+		return nil, fmt.Errorf("error while getting list from Vault with key '%s': %v", key, listErr)
 	}
 	if secretData == nil {
-		return nil, errors.New("List is not available for path: " + key)
+		return nil, fmt.Errorf("list is not available for key '%s'", key)
 	}
 	if val, ok := secretData["keys"]; ok {
 		if keysTemp, castOk := val.([]interface{}); castOk {
@@ -99,7 +92,7 @@ func (c *VaultKeyValueStore) List(key string) ([]string, error) {
 			return keys, nil
 		}
 	}
-	return nil, errors.New("List is not available for path: " + key)
+	return nil, fmt.Errorf("list is not available for key '%s'", key)
 }
 
 func getConfig(address, cert, key, caCert string) (*api.Config, error) {
@@ -162,15 +155,14 @@ func (c *VaultKeyValueStore) GetData(key string, version int) (map[string]interf
 	path := sanitizePath(key)
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
-		log.Error("Error checking version %s: %s", path, pathError)
-		return nil, pathError
+		return nil, fmt.Errorf("error checking version for path '%s': %v", path, pathError)
 	}
 
 	var versionParam map[string]string
 
 	if v2 {
 		path = addPrefixToVKVPath(path, mountPath, "data")
-		log.Info("Prefix added to the kv path %v", path)
+		log.Debugf("prefix added to the kv path '%s'", path)
 		if version > 0 {
 			versionParam = map[string]string{
 				"version": fmt.Sprintf("%d", version),
@@ -180,15 +172,13 @@ func (c *VaultKeyValueStore) GetData(key string, version int) (map[string]interf
 
 	secret, err := kvReadRequest(client, path, versionParam)
 	if err != nil {
-		log.Error("Error reading %s: %s", path, err)
 		if secret != nil {
 			return secret.Data, nil
 		}
-		return nil, fmt.Errorf("No value found at %s", path)
+		return nil, fmt.Errorf("no value found at '%s'", path)
 	}
 	if secret == nil {
-		log.Error("No value found at %s", path)
-		return nil, fmt.Errorf("No value found at %s", path)
+		return nil, fmt.Errorf("no value found at '%s'", path)
 	}
 
 	data := secret.Data
@@ -204,7 +194,7 @@ func (c *VaultKeyValueStore) GetData(key string, version int) (map[string]interf
 		return data, nil
 	}
 
-	return nil, fmt.Errorf("No value found at %s", path)
+	return nil, fmt.Errorf("no value found at '%s'", path)
 }
 
 func (c *VaultKeyValueStore) ExistsData(key string, version int) (bool, error) {
@@ -212,15 +202,14 @@ func (c *VaultKeyValueStore) ExistsData(key string, version int) (bool, error) {
 	path := sanitizePath(key)
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
-		log.Error("Error checking version %s: %s", path, pathError)
-		return false, pathError
+		return false, fmt.Errorf("error checking version '%s': %s", path, pathError)
 	}
 
 	var versionParam map[string]string
 
 	if v2 {
 		path = addPrefixToVKVPath(path, mountPath, "data")
-		log.Info("Prefix added to the kv path %v", path)
+		log.Debugf("prefix added to the kv path '%s'", path)
 		if version > 0 {
 			versionParam = map[string]string{
 				"version": fmt.Sprintf("%d", version),
@@ -230,7 +219,6 @@ func (c *VaultKeyValueStore) ExistsData(key string, version int) (bool, error) {
 
 	secret, err := kvReadRequest(client, path, versionParam)
 	if err != nil {
-		log.Error("Error reading %s: %s", path, err)
 		if secret != nil {
 			return true, nil
 		}
@@ -262,7 +250,6 @@ func (c *VaultKeyValueStore) PutData(key string, data map[string]interface{}, ca
 
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
-		log.Error(pathError.Error())
 		return pathError
 	}
 
@@ -280,14 +267,9 @@ func (c *VaultKeyValueStore) PutData(key string, data map[string]interface{}, ca
 
 	secret, writeError := client.Logical().Write(path, data)
 	if writeError != nil {
-		log.Error("Error writing data to %s: %s", path, writeError)
-		if secret != nil {
-			log.Info("Secret: %v\n", secret)
-		}
-		return writeError
+		return fmt.Errorf("error writing data to '%s': %v", path, writeError)
 	}
 	if secret == nil {
-		log.Info("Success! Data written to: %s", path)
 		return nil
 	}
 	return nil
@@ -298,7 +280,6 @@ func (c *VaultKeyValueStore) DeleteData(key string, versions []string) error {
 	path := sanitizePath(key)
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
-		log.Error(pathError.Error())
 		return pathError
 	}
 
@@ -311,14 +292,8 @@ func (c *VaultKeyValueStore) DeleteData(key string, versions []string) error {
 	}
 
 	if deleteError != nil {
-		log.Error("Error deleting %s: %s", path, deleteError)
-		if secret != nil {
-			log.Info("Secret %v\n", secret)
-		}
-		return deleteError
+		return fmt.Errorf("error deleting '%s': %v", path, deleteError)
 	}
-
-	log.Info("Success! Data deleted (if it existed) at: %s", path)
 	return nil
 }
 
@@ -327,7 +302,6 @@ func (c *VaultKeyValueStore) ListData(key string) (map[string]interface{}, error
 	path := ensureTrailingSlash(sanitizePath(key))
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
-		log.Error(pathError.Error())
 		return nil, pathError
 	}
 
@@ -337,23 +311,15 @@ func (c *VaultKeyValueStore) ListData(key string) (map[string]interface{}, error
 
 	secret, listError := client.Logical().List(path)
 	if listError != nil {
-		log.Error("Error listing %s: %s", path, listError.Error())
-		return nil, listError
+		return nil, fmt.Errorf("error listing '%s': %v", path, listError)
 	}
 	if secret == nil || secret.Data == nil {
-		log.Debugf(fmt.Sprintf("No value found at %s", path))
+		log.Debugf(fmt.Sprintf("no value found at '%s'", path))
 		return map[string]interface{}{}, nil
 	}
 
-	// If the secret is wrapped, return the wrapped response.
-	if secret.WrapInfo != nil && secret.WrapInfo.TTL != 0 {
-		log.Info("Wrapped Secret %v\n", secret)
-		// TODO: handle wrapped secret
-	}
-
 	if _, ok := extractListData(secret); !ok {
-		log.Error(fmt.Sprintf("No entries found at %s", path))
-		return nil, fmt.Errorf("No entries found at %s", path)
+		return nil, fmt.Errorf("no entries found at '%s'", path)
 	}
 
 	return secret.Data, nil
