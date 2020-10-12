@@ -283,12 +283,11 @@ func (c *VaultKeyValueStore) DeleteData(key string, versions []string) error {
 		return pathError
 	}
 
-	var secret *api.Secret
 	var deleteError error
 	if v2 {
-		secret, deleteError = c.deleteV2(path, mountPath, versions, true)
+		_, deleteError = c.deleteV2(path, mountPath, versions, true)
 	} else {
-		secret, deleteError = client.Logical().Delete(path)
+		_, deleteError = client.Logical().Delete(path)
 	}
 
 	if deleteError != nil {
