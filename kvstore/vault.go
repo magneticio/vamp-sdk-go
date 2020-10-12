@@ -162,7 +162,6 @@ func (c *VaultKeyValueStore) GetData(key string, version int) (map[string]interf
 
 	if v2 {
 		path = addPrefixToVKVPath(path, mountPath, "data")
-		log.Debugf("prefix added to the kv path '%s'", path)
 		if version > 0 {
 			versionParam = map[string]string{
 				"version": fmt.Sprintf("%d", version),
@@ -209,7 +208,6 @@ func (c *VaultKeyValueStore) ExistsData(key string, version int) (bool, error) {
 
 	if v2 {
 		path = addPrefixToVKVPath(path, mountPath, "data")
-		log.Debugf("prefix added to the kv path '%s'", path)
 		if version > 0 {
 			versionParam = map[string]string{
 				"version": fmt.Sprintf("%d", version),
@@ -313,7 +311,6 @@ func (c *VaultKeyValueStore) ListData(key string) (map[string]interface{}, error
 		return nil, fmt.Errorf("error listing '%s': %v", path, listError)
 	}
 	if secret == nil || secret.Data == nil {
-		log.Debugf(fmt.Sprintf("no value found at '%s'", path))
 		return map[string]interface{}{}, nil
 	}
 
