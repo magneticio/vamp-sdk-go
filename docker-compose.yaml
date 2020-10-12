@@ -1,0 +1,12 @@
+version: "3"
+
+services:
+  vault:
+    image: circleci/vault-cci
+    ports:
+      - "8200:8200"
+      - "8201:8201"
+    volumes:
+      - ./vault/file:/vault/file
+    cap_add:
+      - IPC_LOCK

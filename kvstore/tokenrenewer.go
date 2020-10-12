@@ -16,18 +16,18 @@ type TokenRenewer struct {
 }
 
 // NewTokenRenewer - returns a new token renewer
-func NewTokenRenewer(client *api.Client, tokenRenewInterval, tokenTTL time.Duration) (*TokenRenewer, error) {
-	if tokenTTL == 0 || tokenRenewInterval == 0 {
-		return nil, fmt.Errorf("Token TTL and token renew interval must be greater than 0")
+func NewTokenRenewer(client *api.Client, tokenRenewalInterval, tokenTTL time.Duration) (*TokenRenewer, error) {
+	if tokenTTL == 0 || tokenRenewalInterval == 0 {
+		return nil, fmt.Errorf("Token TTL and token renewal interval must be greater than 0")
 	}
 
-	if tokenTTL <= tokenRenewInterval {
-		return nil, fmt.Errorf("Token TTL must be greater than token renew interval")
+	if tokenTTL <= tokenRenewalInterval {
+		return nil, fmt.Errorf("Token TTL must be greater than token renewal interval")
 	}
 
 	return &TokenRenewer{
 		client:             client,
-		tokenRenewInterval: tokenRenewInterval,
+		tokenRenewInterval: tokenRenewalInterval,
 		tokenTTL:           tokenTTL,
 	}, nil
 }
