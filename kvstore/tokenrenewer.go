@@ -10,9 +10,9 @@ import (
 
 // TokenRenewer - struct responsible for Vault token renewal process
 type TokenRenewer struct {
-	client             *api.Client
-	tokenRenewInterval time.Duration
-	tokenTTL           time.Duration
+	client               *api.Client
+	tokenRenewalInterval time.Duration
+	tokenTTL             time.Duration
 }
 
 // NewTokenRenewer - returns a new token renewer
@@ -26,9 +26,9 @@ func NewTokenRenewer(client *api.Client, tokenRenewalInterval, tokenTTL time.Dur
 	}
 
 	return &TokenRenewer{
-		client:             client,
-		tokenRenewInterval: tokenRenewalInterval,
-		tokenTTL:           tokenTTL,
+		client:               client,
+		tokenRenewalInterval: tokenRenewalInterval,
+		tokenTTL:             tokenTTL,
 	}, nil
 }
 
@@ -38,7 +38,7 @@ func (tr *TokenRenewer) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(tr.tokenRenewInterval):
+		case <-time.After(tr.tokenRenewalInterval):
 			if err := tr.renewToken(); err != nil {
 				log.Errorf("Cannot renew Vault token: %v", err)
 			}
