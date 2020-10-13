@@ -380,7 +380,7 @@ func tryRenewToken(client *api.Client, params map[string]string) error {
 	tokenCurrentTTLSeconds := int(tokenCurrentTTL / time.Second)
 
 	if tokenCurrentTTLSeconds <= increment/2 {
-		log.Debugf("Vault: refreshing token")
+		log.Debugf("Vault: refreshing token using increment: %d", increment)
 		if _, err := token.RenewSelf(increment); err != nil {
 			return fmt.Errorf("cannot refresh token: %v", err)
 		}
