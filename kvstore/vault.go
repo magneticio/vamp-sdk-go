@@ -28,9 +28,6 @@ type VaultKeyValueStore struct {
 }
 
 func NewVaultKeyValueStore(address string, token string, params map[string]string) (*VaultKeyValueStore, error) {
-
-	log.Infof("Initialising Vault Client with address %s", address)
-
 	config, configErr := getConfig(address, params["cert"], params["key"], params["caCert"])
 	if configErr != nil {
 		return nil, fmt.Errorf("error getting config: %v", configErr)
@@ -399,12 +396,12 @@ func onTokenRenewal(renewer *api.Renewer) {
 		case err := <-renewer.DoneCh():
 			switch err {
 			case api.ErrRenewerNotRenewable:
-				log.Debug(err)
+				log.Debugf("Vault: %v", err)
 			default:
-				log.Error(err)
+				log.Errorf("Vault: %v", err)
 			}
 		case result := <-renewer.RenewCh():
-			log.Debugf("token refreshed successfully at %s", result.RenewedAt.Format("2006-01-02 15:04:05"))
+			log.Debugf("Vault: token refreshed successfully at %s", result.RenewedAt.Format("2006-01-02 15:04:05"))
 		}
 	}
 }
