@@ -346,6 +346,16 @@ func setupTokenRenewal(client *api.Client, params map[string]string) error {
 		return fmt.Errorf("cannot lookup token: %v", err)
 	}
 
+	tokenSecretAuth := tokenSecret.Auth
+	if tokenSecretAuth == nil {
+		return fmt.Errorf("token secret auth not found")
+	}
+
+	if !tokenSecretAuth.Renewable {
+		log.Debugf("token refreshing disabled")
+		return nil
+	}
+
 	increment, err := getTokenIncrement(tokenSecret, params)
 	if err != nil {
 		return fmt.Errorf("cannot get token increment: %v", err)
