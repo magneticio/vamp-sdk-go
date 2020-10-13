@@ -1,10 +1,17 @@
 package kvstore
 
-import "github.com/hashicorp/vault/api"
+import (
+	"fmt"
+
+	"github.com/hashicorp/vault/api"
+)
 
 func (c *VaultKeyValueStore) deleteV2(path, mountPath string, versions []string, allVersions bool) (*api.Secret, error) {
-	client := c.getClient()
-	var err error
+	client, err := c.getClient()
+	if err != nil {
+		return nil, fmt.Errorf("cannot get client: %v", err)
+	}
+
 	var secret *api.Secret
 	switch {
 	case len(versions) > 0:

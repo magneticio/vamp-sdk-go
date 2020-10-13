@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/vault/api"
 	"github.com/magneticio/vamp-sdk-go/logging"
@@ -39,10 +40,6 @@ func NewVaultKeyValueStore(address string, token string, params map[string]strin
 	}
 
 	client.SetToken(token)
-
-	if err := setupTokenRenewal(client, params); err != nil {
-		return nil, fmt.Errorf("error setting up token renewal: %v", err)
-	}
 
 	return &VaultKeyValueStore{
 		URL:    address,
@@ -133,8 +130,11 @@ func getConfig(address, cert, key, caCert string) (*api.Config, error) {
 	return conf, nil
 }
 
-func (c *VaultKeyValueStore) getClient() *api.Client {
-	return c.Client
+func (c *VaultKeyValueStore) getClient() (*api.Client, error) {
+	if err := tryRenewToken(c.Client, c.Params); err != nil {
+		return nil, fmt.Errorf("cannot renew token: %v", err)
+	}
+	return c.Client, nil
 }
 
 func fixPath(path string) string {
@@ -157,7 +157,10 @@ func valueMap(value string) map[string]interface{} {
 // Vault API
 
 func (c *VaultKeyValueStore) GetData(key string, version int) (map[string]interface{}, error) {
-	client := c.getClient()
+	client, err := c.getClient()
+	if err != nil {
+		return nil, fmt.Errorf("cannot get client: %v", err)
+	}
 	path := sanitizePath(key)
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
@@ -203,7 +206,10 @@ func (c *VaultKeyValueStore) GetData(key string, version int) (map[string]interf
 }
 
 func (c *VaultKeyValueStore) ExistsData(key string, version int) (bool, error) {
-	client := c.getClient()
+	client, err := c.getClient()
+	if err != nil {
+		return false, fmt.Errorf("cannot get client: %v", err)
+	}
 	path := sanitizePath(key)
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
@@ -249,7 +255,10 @@ func (c *VaultKeyValueStore) ExistsData(key string, version int) (bool, error) {
 }
 
 func (c *VaultKeyValueStore) PutData(key string, data map[string]interface{}, cas int) error {
-	client := c.getClient()
+	client, err := c.getClient()
+	if err != nil {
+		return fmt.Errorf("cannot get client: %v", err)
+	}
 	path := sanitizePath(key)
 
 	mountPath, v2, pathError := isKVv2(path, client)
@@ -280,7 +289,10 @@ func (c *VaultKeyValueStore) PutData(key string, data map[string]interface{}, ca
 }
 
 func (c *VaultKeyValueStore) DeleteData(key string, versions []string) error {
-	client := c.getClient()
+	client, err := c.getClient()
+	if err != nil {
+		return fmt.Errorf("cannot get client: %v", err)
+	}
 	path := sanitizePath(key)
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
@@ -301,7 +313,10 @@ func (c *VaultKeyValueStore) DeleteData(key string, versions []string) error {
 }
 
 func (c *VaultKeyValueStore) ListData(key string) (map[string]interface{}, error) {
-	client := c.getClient()
+	client, err := c.getClient()
+	if err != nil {
+		return nil, fmt.Errorf("cannot get client: %v", err)
+	}
 	path := ensureTrailingSlash(sanitizePath(key))
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
@@ -327,7 +342,7 @@ func (c *VaultKeyValueStore) ListData(key string) (map[string]interface{}, error
 	return secret.Data, nil
 }
 
-func setupTokenRenewal(client *api.Client, params map[string]string) error {
+func tryRenewToken(client *api.Client, params map[string]string) error {
 	auth := client.Auth()
 	if auth == nil {
 		return fmt.Errorf("auth not found")
@@ -343,24 +358,34 @@ func setupTokenRenewal(client *api.Client, params map[string]string) error {
 		return fmt.Errorf("cannot lookup token: %v", err)
 	}
 
+	isRenewable, err := tokenSecret.TokenIsRenewable()
+	if err != nil {
+		return fmt.Errorf("cannot check if token is renewable: %v", err)
+	}
+
+	if !isRenewable {
+		return nil
+	}
+
 	increment, err := getTokenIncrement(tokenSecret, params)
 	if err != nil {
 		return fmt.Errorf("cannot get token increment: %v", err)
 	}
 
-	renewerInput := &api.RenewerInput{
-		Secret:    tokenSecret,
-		Increment: increment,
-	}
-
-	renewer, err := client.NewRenewer(renewerInput)
+	tokenCurrentTTL, err := tokenSecret.TokenTTL()
 	if err != nil {
-		return fmt.Errorf("cannot create token renewer: %v", err)
+		return fmt.Errorf("cannot get token TTL: %v", err)
 	}
 
-	go onTokenRenewal(renewer)
+	tokenCurrentTTLSeconds := int(tokenCurrentTTL / time.Second)
 
-	renewer.Renew()
+	if tokenCurrentTTLSeconds <= increment/2 {
+		log.Debugf("Vault: refreshing token")
+		if _, err := token.RenewSelf(increment); err != nil {
+			return fmt.Errorf("cannot refresh token: %v", err)
+		}
+		log.Debugf("Vault: refreshing token succeeded")
+	}
 
 	return nil
 }
@@ -376,8 +401,7 @@ func getTokenIncrement(token *api.Secret, params map[string]string) (int, error)
 
 	period, ok := token.Data["period"]
 	if !ok {
-		log.Debugf("Vault: period not found in token data")
-		return 0, nil
+		return 0, fmt.Errorf("period not found in token data")
 	}
 	periodJSONNumber, ok := period.(json.Number)
 	if !ok {
@@ -388,22 +412,6 @@ func getTokenIncrement(token *api.Secret, params map[string]string) (int, error)
 		return 0, fmt.Errorf("cannot parse period value: %v", err)
 	}
 	return periodInt, nil
-}
-
-func onTokenRenewal(renewer *api.Renewer) {
-	for {
-		select {
-		case err := <-renewer.DoneCh():
-			switch err {
-			case api.ErrRenewerNotRenewable:
-				log.Debugf("Vault: %v", err)
-			default:
-				log.Errorf("Vault: %v", err)
-			}
-		case result := <-renewer.RenewCh():
-			log.Debugf("Vault: token refreshed successfully at %s", result.RenewedAt.Format("2006-01-02 15:04:05"))
-		}
-	}
 }
 
 func getTokenRenewalIncrementFromParams(params map[string]string) (int, error) {
