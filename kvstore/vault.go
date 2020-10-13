@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	tokenRenewalIncrement = "tokenRenewalIncrement"
+	TokenRenewalIncrement = "tokenRenewalIncrement"
 )
 
 var log = logging.Logger()
@@ -371,7 +371,7 @@ func setupTokenRenewal(client *api.Client, params map[string]string) error {
 func getTokenIncrement(token *api.Secret, params map[string]string) (int, error) {
 	incrementFromParams, err := getTokenRenewalIncrementFromParams(params)
 	if err != nil {
-		return 0, fmt.Errorf("cannot get %s param: %v", tokenRenewalIncrement, err)
+		return 0, fmt.Errorf("cannot get %s param: %v", TokenRenewalIncrement, err)
 	}
 	if incrementFromParams != 0 {
 		return incrementFromParams, nil
@@ -409,7 +409,7 @@ func onTokenRenewal(renewer *api.Renewer) {
 }
 
 func getTokenRenewalIncrementFromParams(params map[string]string) (int, error) {
-	incrementString, ok := params[tokenRenewalIncrement]
+	incrementString, ok := params[TokenRenewalIncrement]
 	if !ok || incrementString == "" {
 		return 0, nil
 	}
