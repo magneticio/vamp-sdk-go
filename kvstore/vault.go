@@ -3,9 +3,11 @@ package kvstore
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/vault/api"
@@ -36,6 +38,10 @@ func NewVaultKeyValueStore(address string, token string, params map[string]strin
 	}
 
 	client.SetToken(token)
+
+	if err := setupTokenRenewal(client, params); err != nil {
+		return nil, fmt.Errorf("error setting up token renewal: %v", err)
+	}
 
 	return &VaultKeyValueStore{
 		URL:    address,
@@ -127,7 +133,6 @@ func getConfig(address, cert, key, caCert string) (*api.Config, error) {
 }
 
 func (c *VaultKeyValueStore) getClient() *api.Client {
-	// TODO: This will check for token renewal
 	return c.Client
 }
 
@@ -319,4 +324,95 @@ func (c *VaultKeyValueStore) ListData(key string) (map[string]interface{}, error
 	}
 
 	return secret.Data, nil
+}
+
+func setupTokenRenewal(client *api.Client, params map[string]string) error {
+	auth := client.Auth()
+	if auth == nil {
+		return fmt.Errorf("auth not found")
+	}
+
+	token := auth.Token()
+	if token == nil {
+		return fmt.Errorf("token not found")
+	}
+
+	tokenSecret, err := token.LookupSelf()
+	if err != nil {
+		return fmt.Errorf("cannot lookup token: %v", err)
+	}
+
+	increment, err := getTokenIncrement(tokenSecret, params)
+	if err != nil {
+		return fmt.Errorf("cannot get token increment: %v", err)
+	}
+
+	renewerInput := &api.RenewerInput{
+		Secret:    tokenSecret,
+		Increment: increment,
+	}
+
+	renewer, err := client.NewRenewer(renewerInput)
+	if err != nil {
+		return fmt.Errorf("cannot create token renewer: %v", err)
+	}
+
+	go onTokenRenewal(renewer)
+
+	renewer.Renew()
+
+	return nil
+}
+
+func getTokenIncrement(token *api.Secret, params map[string]string) (int, error) {
+	incrementFromParams, err := getTokenRenewalIncrementFromParams(params)
+	if err != nil {
+		return 0, fmt.Errorf("cannot get token-renewal-increment: %v", err)
+	}
+	if incrementFromParams != 0 {
+		return incrementFromParams, nil
+	}
+
+	period, ok := token.Data["period"]
+	if !ok {
+		return 0, fmt.Errorf("period not found in token data")
+	}
+	periodJSONNumber, ok := period.(json.Number)
+	if !ok {
+		return 0, fmt.Errorf("invalid type of period in token data")
+	}
+	periodInt, err := strconv.Atoi(string(periodJSONNumber))
+	if err != nil {
+		return 0, fmt.Errorf("cannot parse period value: %v", err)
+	}
+	return periodInt, nil
+}
+
+func onTokenRenewal(renewer *api.Renewer) {
+	for {
+		select {
+		case err := <-renewer.DoneCh():
+			switch err {
+			case api.ErrRenewerNotRenewable:
+				log.Debug(err)
+			default:
+				log.Error(err)
+			}
+		case result := <-renewer.RenewCh():
+			log.Debugf("token refreshed successfully at %s", result.RenewedAt.Format("2006-01-02 15:04:05"))
+		}
+	}
+}
+
+func getTokenRenewalIncrementFromParams(params map[string]string) (int, error) {
+	incrementString, ok := params["token-renewal-increment"]
+	if !ok {
+		return 0, nil
+	}
+	increment, err := strconv.Atoi(incrementString)
+	if err != nil {
+		return 0, fmt.Errorf("cannot parse increment value: %v", err)
+	}
+
+	return increment, nil
 }
