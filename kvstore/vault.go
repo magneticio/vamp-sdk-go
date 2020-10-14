@@ -3,14 +3,20 @@ package kvstore
 import (
 	"crypto/tls"
 	"crypto/x509"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/vault/api"
 	"github.com/magneticio/vamp-sdk-go/logging"
+)
+
+const (
+	TokenRenewalIncrement = "tokenRenewalIncrement"
 )
 
 var log = logging.Logger()
@@ -23,19 +29,14 @@ type VaultKeyValueStore struct {
 }
 
 func NewVaultKeyValueStore(address string, token string, params map[string]string) (*VaultKeyValueStore, error) {
-
-	log.Info("Initialising Vault Client with address %v\n", address)
-
 	config, configErr := getConfig(address, params["cert"], params["key"], params["caCert"])
 	if configErr != nil {
-		log.Error("Error getting config %v\n", configErr.Error())
-		return nil, configErr
+		return nil, fmt.Errorf("error getting config: %v", configErr)
 	}
 
 	client, err := api.NewClient(config)
 	if err != nil {
-		log.Error("Error initialising client %v\n", err.Error())
-		return nil, err
+		return nil, fmt.Errorf("error initialising client: %v", err)
 	}
 
 	client.SetToken(token)
@@ -69,24 +70,20 @@ func (c *VaultKeyValueStore) Exists(key string) (bool, error) {
 }
 
 func (c *VaultKeyValueStore) Delete(keyName string) error {
-	log.Info("Deleting from Vault key %v\n", keyName)
 	err := c.DeleteData(fixPath(keyName), nil) // nil mean versions are not defined
 	if err != nil {
-		log.Error("Error while deleting from Vault key %v - %v\n", keyName, err.Error())
-		return err
+		return fmt.Errorf("error while deleting from Vault key '%s': %v", keyName, err)
 	}
 	return nil
 }
 
 func (c *VaultKeyValueStore) List(key string) ([]string, error) {
-	log.Info("Getting list from Vault with key %v\n", key)
 	secretData, listErr := c.ListData(fixPath(key))
 	if listErr != nil {
-		log.Error("Error while getting list from Vault with key %v - %v\n", key, listErr.Error())
-		return nil, listErr
+		return nil, fmt.Errorf("error while getting list from Vault with key '%s': %v", key, listErr)
 	}
 	if secretData == nil {
-		return nil, errors.New("List is not available for path: " + key)
+		return nil, fmt.Errorf("list is not available for key '%s'", key)
 	}
 	if val, ok := secretData["keys"]; ok {
 		if keysTemp, castOk := val.([]interface{}); castOk {
@@ -99,7 +96,7 @@ func (c *VaultKeyValueStore) List(key string) ([]string, error) {
 			return keys, nil
 		}
 	}
-	return nil, errors.New("List is not available for path: " + key)
+	return nil, fmt.Errorf("list is not available for key '%s'", key)
 }
 
 func getConfig(address, cert, key, caCert string) (*api.Config, error) {
@@ -133,9 +130,11 @@ func getConfig(address, cert, key, caCert string) (*api.Config, error) {
 	return conf, nil
 }
 
-func (c *VaultKeyValueStore) getClient() *api.Client {
-	// TODO: This will check for token renewal
-	return c.Client
+func (c *VaultKeyValueStore) getClient() (*api.Client, error) {
+	if err := tryRenewToken(c.Client, c.Params); err != nil {
+		return nil, fmt.Errorf("cannot renew token: %v", err)
+	}
+	return c.Client, nil
 }
 
 func fixPath(path string) string {
@@ -158,19 +157,20 @@ func valueMap(value string) map[string]interface{} {
 // Vault API
 
 func (c *VaultKeyValueStore) GetData(key string, version int) (map[string]interface{}, error) {
-	client := c.getClient()
+	client, err := c.getClient()
+	if err != nil {
+		return nil, fmt.Errorf("cannot get client: %v", err)
+	}
 	path := sanitizePath(key)
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
-		log.Error("Error checking version %s: %s", path, pathError)
-		return nil, pathError
+		return nil, fmt.Errorf("error checking version for path '%s': %v", path, pathError)
 	}
 
 	var versionParam map[string]string
 
 	if v2 {
 		path = addPrefixToVKVPath(path, mountPath, "data")
-		log.Info("Prefix added to the kv path %v", path)
 		if version > 0 {
 			versionParam = map[string]string{
 				"version": fmt.Sprintf("%d", version),
@@ -180,15 +180,13 @@ func (c *VaultKeyValueStore) GetData(key string, version int) (map[string]interf
 
 	secret, err := kvReadRequest(client, path, versionParam)
 	if err != nil {
-		log.Error("Error reading %s: %s", path, err)
 		if secret != nil {
 			return secret.Data, nil
 		}
-		return nil, fmt.Errorf("No value found at %s", path)
+		return nil, fmt.Errorf("no value found at '%s'", path)
 	}
 	if secret == nil {
-		log.Error("No value found at %s", path)
-		return nil, fmt.Errorf("No value found at %s", path)
+		return nil, fmt.Errorf("no value found at '%s'", path)
 	}
 
 	data := secret.Data
@@ -204,23 +202,24 @@ func (c *VaultKeyValueStore) GetData(key string, version int) (map[string]interf
 		return data, nil
 	}
 
-	return nil, fmt.Errorf("No value found at %s", path)
+	return nil, fmt.Errorf("no value found at '%s'", path)
 }
 
 func (c *VaultKeyValueStore) ExistsData(key string, version int) (bool, error) {
-	client := c.getClient()
+	client, err := c.getClient()
+	if err != nil {
+		return false, fmt.Errorf("cannot get client: %v", err)
+	}
 	path := sanitizePath(key)
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
-		log.Error("Error checking version %s: %s", path, pathError)
-		return false, pathError
+		return false, fmt.Errorf("error checking version '%s': %s", path, pathError)
 	}
 
 	var versionParam map[string]string
 
 	if v2 {
 		path = addPrefixToVKVPath(path, mountPath, "data")
-		log.Info("Prefix added to the kv path %v", path)
 		if version > 0 {
 			versionParam = map[string]string{
 				"version": fmt.Sprintf("%d", version),
@@ -230,7 +229,6 @@ func (c *VaultKeyValueStore) ExistsData(key string, version int) (bool, error) {
 
 	secret, err := kvReadRequest(client, path, versionParam)
 	if err != nil {
-		log.Error("Error reading %s: %s", path, err)
 		if secret != nil {
 			return true, nil
 		}
@@ -257,12 +255,14 @@ func (c *VaultKeyValueStore) ExistsData(key string, version int) (bool, error) {
 }
 
 func (c *VaultKeyValueStore) PutData(key string, data map[string]interface{}, cas int) error {
-	client := c.getClient()
+	client, err := c.getClient()
+	if err != nil {
+		return fmt.Errorf("cannot get client: %v", err)
+	}
 	path := sanitizePath(key)
 
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
-		log.Error(pathError.Error())
 		return pathError
 	}
 
@@ -280,54 +280,46 @@ func (c *VaultKeyValueStore) PutData(key string, data map[string]interface{}, ca
 
 	secret, writeError := client.Logical().Write(path, data)
 	if writeError != nil {
-		log.Error("Error writing data to %s: %s", path, writeError)
-		if secret != nil {
-			log.Info("Secret: %v\n", secret)
-		}
-		return writeError
+		return fmt.Errorf("error writing data to '%s': %v", path, writeError)
 	}
 	if secret == nil {
-		log.Info("Success! Data written to: %s", path)
 		return nil
 	}
 	return nil
 }
 
 func (c *VaultKeyValueStore) DeleteData(key string, versions []string) error {
-	client := c.getClient()
+	client, err := c.getClient()
+	if err != nil {
+		return fmt.Errorf("cannot get client: %v", err)
+	}
 	path := sanitizePath(key)
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
-		log.Error(pathError.Error())
 		return pathError
 	}
 
-	var secret *api.Secret
 	var deleteError error
 	if v2 {
-		secret, deleteError = c.deleteV2(path, mountPath, versions, true)
+		_, deleteError = c.deleteV2(path, mountPath, versions, true)
 	} else {
-		secret, deleteError = client.Logical().Delete(path)
+		_, deleteError = client.Logical().Delete(path)
 	}
 
 	if deleteError != nil {
-		log.Error("Error deleting %s: %s", path, deleteError)
-		if secret != nil {
-			log.Info("Secret %v\n", secret)
-		}
-		return deleteError
+		return fmt.Errorf("error deleting '%s': %v", path, deleteError)
 	}
-
-	log.Info("Success! Data deleted (if it existed) at: %s", path)
 	return nil
 }
 
 func (c *VaultKeyValueStore) ListData(key string) (map[string]interface{}, error) {
-	client := c.getClient()
+	client, err := c.getClient()
+	if err != nil {
+		return nil, fmt.Errorf("cannot get client: %v", err)
+	}
 	path := ensureTrailingSlash(sanitizePath(key))
 	mountPath, v2, pathError := isKVv2(path, client)
 	if pathError != nil {
-		log.Error(pathError.Error())
 		return nil, pathError
 	}
 
@@ -337,24 +329,100 @@ func (c *VaultKeyValueStore) ListData(key string) (map[string]interface{}, error
 
 	secret, listError := client.Logical().List(path)
 	if listError != nil {
-		log.Error("Error listing %s: %s", path, listError.Error())
-		return nil, listError
+		return nil, fmt.Errorf("error listing '%s': %v", path, listError)
 	}
 	if secret == nil || secret.Data == nil {
-		log.Error(fmt.Sprintf("No value found at %s", path))
-		return nil, fmt.Errorf("No value found at %s", path)
-	}
-
-	// If the secret is wrapped, return the wrapped response.
-	if secret.WrapInfo != nil && secret.WrapInfo.TTL != 0 {
-		log.Info("Wrapped Secret %v\n", secret)
-		// TODO: handle wrapped secret
+		return map[string]interface{}{}, nil
 	}
 
 	if _, ok := extractListData(secret); !ok {
-		log.Error(fmt.Sprintf("No entries found at %s", path))
-		return nil, fmt.Errorf("No entries found at %s", path)
+		return nil, fmt.Errorf("no entries found at '%s'", path)
 	}
 
 	return secret.Data, nil
+}
+
+func tryRenewToken(client *api.Client, params map[string]string) error {
+	auth := client.Auth()
+	if auth == nil {
+		return fmt.Errorf("auth not found")
+	}
+
+	token := auth.Token()
+	if token == nil {
+		return fmt.Errorf("token not found")
+	}
+
+	tokenSecret, err := token.LookupSelf()
+	if err != nil {
+		return fmt.Errorf("cannot lookup token: %v", err)
+	}
+
+	isRenewable, err := tokenSecret.TokenIsRenewable()
+	if err != nil {
+		return fmt.Errorf("cannot check if token is renewable: %v", err)
+	}
+
+	if !isRenewable {
+		return nil
+	}
+
+	increment, err := getTokenIncrement(tokenSecret, params)
+	if err != nil {
+		return fmt.Errorf("cannot get token increment: %v", err)
+	}
+
+	tokenCurrentTTL, err := tokenSecret.TokenTTL()
+	if err != nil {
+		return fmt.Errorf("cannot get token TTL: %v", err)
+	}
+
+	tokenCurrentTTLSeconds := int(tokenCurrentTTL / time.Second)
+
+	if tokenCurrentTTLSeconds <= increment/2 {
+		log.Debugf("Vault: refreshing token using increment: %d", increment)
+		if _, err := token.RenewSelf(increment); err != nil {
+			return fmt.Errorf("cannot refresh token: %v", err)
+		}
+		log.Debugf("Vault: refreshing token succeeded")
+	}
+
+	return nil
+}
+
+func getTokenIncrement(token *api.Secret, params map[string]string) (int, error) {
+	incrementFromParams, err := getTokenRenewalIncrementFromParams(params)
+	if err != nil {
+		return 0, fmt.Errorf("cannot get %s param: %v", TokenRenewalIncrement, err)
+	}
+	if incrementFromParams != 0 {
+		return incrementFromParams, nil
+	}
+
+	period, ok := token.Data["period"]
+	if !ok {
+		return 0, fmt.Errorf("period not found in token data")
+	}
+	periodJSONNumber, ok := period.(json.Number)
+	if !ok {
+		return 0, fmt.Errorf("invalid type of period in token data")
+	}
+	periodInt, err := strconv.Atoi(string(periodJSONNumber))
+	if err != nil {
+		return 0, fmt.Errorf("cannot parse period value: %v", err)
+	}
+	return periodInt, nil
+}
+
+func getTokenRenewalIncrementFromParams(params map[string]string) (int, error) {
+	incrementString, ok := params[TokenRenewalIncrement]
+	if !ok || incrementString == "" {
+		return 0, nil
+	}
+	increment, err := strconv.Atoi(incrementString)
+	if err != nil {
+		return 0, fmt.Errorf("cannot parse increment value: %v", err)
+	}
+
+	return increment, nil
 }
