@@ -15,10 +15,6 @@ import (
 	"github.com/magneticio/vamp-sdk-go/logging"
 )
 
-const (
-	TokenRenewalIncrement = "tokenRenewalIncrement"
-)
-
 var log = logging.Logger()
 
 type VaultKeyValueStore struct {
@@ -131,7 +127,7 @@ func getConfig(address, cert, key, caCert string) (*api.Config, error) {
 }
 
 func (c *VaultKeyValueStore) getClient() (*api.Client, error) {
-	if err := tryRenewToken(c.Client, c.Params); err != nil {
+	if err := tryRenewToken(c.Client); err != nil {
 		return nil, fmt.Errorf("cannot renew token: %v", err)
 	}
 	return c.Client, nil
@@ -342,7 +338,7 @@ func (c *VaultKeyValueStore) ListData(key string) (map[string]interface{}, error
 	return secret.Data, nil
 }
 
-func tryRenewToken(client *api.Client, params map[string]string) error {
+func tryRenewToken(client *api.Client) error {
 	auth := client.Auth()
 	if auth == nil {
 		return fmt.Errorf("auth not found")
@@ -367,7 +363,7 @@ func tryRenewToken(client *api.Client, params map[string]string) error {
 		return nil
 	}
 
-	increment, err := getTokenIncrement(tokenSecret, params)
+	increment, err := getTokenIncrement(tokenSecret)
 	if err != nil {
 		return fmt.Errorf("cannot get token increment: %v", err)
 	}
@@ -390,39 +386,34 @@ func tryRenewToken(client *api.Client, params map[string]string) error {
 	return nil
 }
 
-func getTokenIncrement(token *api.Secret, params map[string]string) (int, error) {
-	incrementFromParams, err := getTokenRenewalIncrementFromParams(params)
-	if err != nil {
-		return 0, fmt.Errorf("cannot get %s param: %v", TokenRenewalIncrement, err)
-	}
-	if incrementFromParams != 0 {
-		return incrementFromParams, nil
-	}
-
-	period, ok := token.Data["period"]
+func getTokenIncrement(token *api.Secret) (int, error) {
+	_, ok := token.Data["period"]
 	if !ok {
-		return 0, fmt.Errorf("period not found in token data")
+		return getTokenIncrementFromCreationTTL(token)
 	}
-	periodJSONNumber, ok := period.(json.Number)
-	if !ok {
-		return 0, fmt.Errorf("invalid type of period in token data")
-	}
-	periodInt, err := strconv.Atoi(string(periodJSONNumber))
-	if err != nil {
-		return 0, fmt.Errorf("cannot parse period value: %v", err)
-	}
-	return periodInt, nil
+	return getTokenIncrementFromPeriod(token)
 }
 
-func getTokenRenewalIncrementFromParams(params map[string]string) (int, error) {
-	incrementString, ok := params[TokenRenewalIncrement]
-	if !ok || incrementString == "" {
-		return 0, nil
-	}
-	increment, err := strconv.Atoi(incrementString)
-	if err != nil {
-		return 0, fmt.Errorf("cannot parse increment value: %v", err)
-	}
+func getTokenIncrementFromPeriod(token *api.Secret) (int, error) {
+	return getTokenIncrementFromNumberDataField(token, "period")
+}
 
-	return increment, nil
+func getTokenIncrementFromCreationTTL(token *api.Secret) (int, error) {
+	return getTokenIncrementFromNumberDataField(token, "creation_ttl")
+}
+
+func getTokenIncrementFromNumberDataField(token *api.Secret, field string) (int, error) {
+	fieldValue, ok := token.Data[field]
+	if !ok {
+		return 0, fmt.Errorf("%s not found in token data", field)
+	}
+	fieldValueJSONNumber, ok := fieldValue.(json.Number)
+	if !ok {
+		return 0, fmt.Errorf("invalid type of %s in token data", field)
+	}
+	fieldValueInt, err := strconv.Atoi(string(fieldValueJSONNumber))
+	if err != nil {
+		return 0, fmt.Errorf("cannot parse %s value: %v", field, err)
+	}
+	return fieldValueInt, nil
 }
