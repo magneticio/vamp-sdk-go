@@ -1,12 +1,18 @@
 package kvstore
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 
 	"github.com/hashicorp/vault/api"
 )
 
-func (c *VaultKeyValueStore) deleteV2(path, mountPath string, versions []string, allVersions bool) (*api.Secret, error) {
+func (c *VaultKeyValueStore) deleteV2(ctx context.Context, path, mountPath string, versions []string, allVersions bool) (*api.Secret, error) {
+	var err error
+	c.beforeRequest(ctx, path, http.MethodDelete)
+	defer c.afterRequest(ctx, err)
+
 	client, err := c.getClient()
 	if err != nil {
 		return nil, fmt.Errorf("cannot get client: %v", err)
