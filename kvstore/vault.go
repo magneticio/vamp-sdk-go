@@ -167,7 +167,7 @@ func (c *VaultKeyValueStore) afterRequest(ctx context.Context, err error) {
 	span := trace.SpanFromContext(ctx)
 	defer span.End()
 	if err != nil {
-		span.SetAttributes(attribute.Key("error").String(err.Error()))
+		span.SetAttributes(attribute.Key("error").Bool(true), attribute.Key("error_message").String(err.Error()))
 	}
 
 	return
