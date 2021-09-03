@@ -159,7 +159,7 @@ func valueMap(value string) map[string]interface{} {
 
 func (c *VaultKeyValueStore) beforeRequest(ctx context.Context, path string, action string) context.Context {
 	ctx, span := c.Tracer.Start(ctx, "vault request")
-	span.SetAttributes(attribute.Key("path").String(path), attribute.Key("action").String(action))
+	span.SetAttributes(attribute.Key("path").String(path), attribute.Key("method").String(action))
 	return ctx
 }
 
