@@ -23,7 +23,7 @@ func NewKeyValueStore(config configuration.KeyValueStoreConfiguration, tracer tr
 			"key":    config.Vault.ClientTlsKey,
 			"caCert": config.Vault.ServerTlsCert,
 		}
-		vaultKVclient, vaultKVclientError := NewVaultKeyValueStore(config.Vault.Url, config.Vault.Token, params, tracer)
+		vaultKVclient, vaultKVclientError := NewVaultKeyValueStore(config.Vault.Url, config.Vault.Token, params)
 		if vaultKVclientError != nil {
 			return nil, vaultKVclientError
 		}
