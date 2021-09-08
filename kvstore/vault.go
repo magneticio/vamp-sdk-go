@@ -14,10 +14,12 @@ import (
 
 	"github.com/hashicorp/vault/api"
 	"github.com/magneticio/vamp-sdk-go/logging"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 )
 
+const tracerInstrumentationName = "github.com/magneticio/vamp-sdk-go/kvstore"
 var log = logging.Logger()
 
 type VaultKeyValueStore struct {
@@ -28,7 +30,7 @@ type VaultKeyValueStore struct {
 	Tracer trace.Tracer
 }
 
-func NewVaultKeyValueStore(address string, token string, params map[string]string, tracer trace.Tracer) (*VaultKeyValueStore, error) {
+func NewVaultKeyValueStore(address string, token string, params map[string]string) (*VaultKeyValueStore, error) {
 	config, configErr := getConfig(address, params["cert"], params["key"], params["caCert"])
 	if configErr != nil {
 		return nil, fmt.Errorf("error getting config: %v", configErr)
@@ -40,6 +42,7 @@ func NewVaultKeyValueStore(address string, token string, params map[string]strin
 	}
 
 	client.SetToken(token)
+	tracer := otel.GetTracerProvider().Tracer(tracerInstrumentationName)
 
 	return &VaultKeyValueStore{
 		URL:    address,
