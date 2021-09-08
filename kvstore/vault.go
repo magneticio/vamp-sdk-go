@@ -1,6 +1,7 @@
 package kvstore
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/hashicorp/vault/api"
 	"github.com/magneticio/vamp-sdk-go/logging"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var log = logging.Logger()
@@ -22,9 +25,10 @@ type VaultKeyValueStore struct {
 	Token  string
 	Params map[string]string
 	Client *api.Client
+	Tracer trace.Tracer
 }
 
-func NewVaultKeyValueStore(address string, token string, params map[string]string) (*VaultKeyValueStore, error) {
+func NewVaultKeyValueStore(address string, token string, params map[string]string, tracer trace.Tracer) (*VaultKeyValueStore, error) {
 	config, configErr := getConfig(address, params["cert"], params["key"], params["caCert"])
 	if configErr != nil {
 		return nil, fmt.Errorf("error getting config: %v", configErr)
@@ -42,15 +46,16 @@ func NewVaultKeyValueStore(address string, token string, params map[string]strin
 		Token:  token,
 		Params: params,
 		Client: client,
+		Tracer: tracer,
 	}, nil
 }
 
-func (c *VaultKeyValueStore) Put(key string, value string) error {
-	return c.PutData(fixPath(key), valueMap(value), -1) // -1 means new version
+func (c *VaultKeyValueStore) Put(ctx context.Context, key string, value string) error {
+	return c.PutData(ctx, fixPath(key), valueMap(value), -1) // -1 means new version
 }
 
-func (c *VaultKeyValueStore) Get(key string) (string, error) {
-	secretValues, err := c.GetData(fixPath(key), 0) //0 means lastest version
+func (c *VaultKeyValueStore) Get(ctx context.Context, key string) (string, error) {
+	secretValues, err := c.GetData(ctx, fixPath(key), 0) //0 means lastest version
 	if err != nil {
 		return "", err
 	}
@@ -61,20 +66,20 @@ func (c *VaultKeyValueStore) Get(key string) (string, error) {
 	return value, nil
 }
 
-func (c *VaultKeyValueStore) Exists(key string) (bool, error) {
-	return c.ExistsData(fixPath(key), 0) //0 means lastest version
+func (c *VaultKeyValueStore) Exists(ctx context.Context, key string) (bool, error) {
+	return c.ExistsData(ctx, fixPath(key), 0) //0 means lastest version
 }
 
-func (c *VaultKeyValueStore) Delete(keyName string) error {
-	err := c.DeleteData(fixPath(keyName), nil) // nil mean versions are not defined
+func (c *VaultKeyValueStore) Delete(ctx context.Context, keyName string) error {
+	err := c.DeleteData(ctx, fixPath(keyName), nil) // nil mean versions are not defined
 	if err != nil {
 		return fmt.Errorf("error while deleting from Vault key '%s': %v", keyName, err)
 	}
 	return nil
 }
 
-func (c *VaultKeyValueStore) List(key string) ([]string, error) {
-	secretData, listErr := c.ListData(fixPath(key))
+func (c *VaultKeyValueStore) List(ctx context.Context, key string) ([]string, error) {
+	secretData, listErr := c.ListData(ctx, fixPath(key))
 	if listErr != nil {
 		return nil, fmt.Errorf("error while getting list from Vault with key '%s': %v", key, listErr)
 	}
@@ -152,15 +157,35 @@ func valueMap(value string) map[string]interface{} {
 
 // Vault API
 
-func (c *VaultKeyValueStore) GetData(key string, version int) (map[string]interface{}, error) {
+func (c *VaultKeyValueStore) beforeRequest(ctx context.Context, path string, action string) context.Context {
+	ctx, span := c.Tracer.Start(ctx, "vault request")
+	span.SetAttributes(attribute.Key("path").String(path), attribute.Key("method").String(action))
+	return ctx
+}
+
+func (c *VaultKeyValueStore) afterRequest(ctx context.Context, err error) {
+	span := trace.SpanFromContext(ctx)
+	defer span.End()
+	if err != nil {
+		span.SetAttributes(attribute.Key("error").Bool(true), attribute.Key("error_message").String(err.Error()))
+	}
+
+	return
+}
+
+func (c *VaultKeyValueStore) GetData(ctx context.Context, key string, version int) (map[string]interface{}, error) {
+	var err error
+	path := sanitizePath(key)
+	c.beforeRequest(ctx, path, http.MethodGet)
+	defer c.afterRequest(ctx, err)
+
 	client, err := c.getClient()
 	if err != nil {
 		return nil, fmt.Errorf("cannot get client: %v", err)
 	}
-	path := sanitizePath(key)
-	mountPath, v2, pathError := isKVv2(path, client)
-	if pathError != nil {
-		return nil, fmt.Errorf("error checking version for path '%s': %v", path, pathError)
+	mountPath, v2, err := isKVv2(path, client)
+	if err != nil {
+		return nil, fmt.Errorf("error checking version for path '%s': %v", path, err)
 	}
 
 	var versionParam map[string]string
@@ -201,15 +226,19 @@ func (c *VaultKeyValueStore) GetData(key string, version int) (map[string]interf
 	return nil, fmt.Errorf("no value found at '%s'", path)
 }
 
-func (c *VaultKeyValueStore) ExistsData(key string, version int) (bool, error) {
+func (c *VaultKeyValueStore) ExistsData(ctx context.Context, key string, version int) (bool, error) {
+	var err error
+	path := sanitizePath(key)
+	c.beforeRequest(ctx, path, http.MethodGet)
+	defer c.afterRequest(ctx, err)
+
 	client, err := c.getClient()
 	if err != nil {
 		return false, fmt.Errorf("cannot get client: %v", err)
 	}
-	path := sanitizePath(key)
-	mountPath, v2, pathError := isKVv2(path, client)
-	if pathError != nil {
-		return false, fmt.Errorf("error checking version '%s': %s", path, pathError)
+	mountPath, v2, err := isKVv2(path, client)
+	if err != nil {
+		return false, fmt.Errorf("error checking version '%s': %s", path, err)
 	}
 
 	var versionParam map[string]string
@@ -250,16 +279,20 @@ func (c *VaultKeyValueStore) ExistsData(key string, version int) (bool, error) {
 	return false, nil
 }
 
-func (c *VaultKeyValueStore) PutData(key string, data map[string]interface{}, cas int) error {
+func (c *VaultKeyValueStore) PutData(ctx context.Context, key string, data map[string]interface{}, cas int) error {
+	var err error
+	path := sanitizePath(key)
+	c.beforeRequest(ctx, path, http.MethodPut)
+	defer c.afterRequest(ctx, err)
+
 	client, err := c.getClient()
 	if err != nil {
 		return fmt.Errorf("cannot get client: %v", err)
 	}
-	path := sanitizePath(key)
 
-	mountPath, v2, pathError := isKVv2(path, client)
-	if pathError != nil {
-		return pathError
+	mountPath, v2, err := isKVv2(path, client)
+	if err != nil {
+		return err
 	}
 
 	if v2 {
@@ -274,9 +307,9 @@ func (c *VaultKeyValueStore) PutData(key string, data map[string]interface{}, ca
 		}
 	}
 
-	secret, writeError := client.Logical().Write(path, data)
-	if writeError != nil {
-		return fmt.Errorf("error writing data to '%s': %v", path, writeError)
+	secret, err := client.Logical().Write(path, data)
+	if err != nil {
+		return fmt.Errorf("error writing data to '%s': %v", path, err)
 	}
 	if secret == nil {
 		return nil
@@ -284,48 +317,55 @@ func (c *VaultKeyValueStore) PutData(key string, data map[string]interface{}, ca
 	return nil
 }
 
-func (c *VaultKeyValueStore) DeleteData(key string, versions []string) error {
+func (c *VaultKeyValueStore) DeleteData(ctx context.Context, key string, versions []string) error {
+	var err error
+	path := sanitizePath(key)
+	c.beforeRequest(ctx, path, http.MethodDelete)
+	defer c.afterRequest(ctx, err)
+
 	client, err := c.getClient()
 	if err != nil {
 		return fmt.Errorf("cannot get client: %v", err)
 	}
-	path := sanitizePath(key)
-	mountPath, v2, pathError := isKVv2(path, client)
-	if pathError != nil {
-		return pathError
+	mountPath, v2, err := isKVv2(path, client)
+	if err != nil {
+		return err
 	}
 
-	var deleteError error
 	if v2 {
-		_, deleteError = c.deleteV2(path, mountPath, versions, true)
+		_, err = c.deleteV2(ctx, path, mountPath, versions, true)
 	} else {
-		_, deleteError = client.Logical().Delete(path)
+		_, err = client.Logical().Delete(path)
 	}
 
-	if deleteError != nil {
-		return fmt.Errorf("error deleting '%s': %v", path, deleteError)
+	if err != nil {
+		return fmt.Errorf("error deleting '%s': %v", path, err)
 	}
 	return nil
 }
 
-func (c *VaultKeyValueStore) ListData(key string) (map[string]interface{}, error) {
+func (c *VaultKeyValueStore) ListData(ctx context.Context, key string) (map[string]interface{}, error) {
+	var err error
+	path := ensureTrailingSlash(sanitizePath(key))
+	c.beforeRequest(ctx, path, http.MethodGet)
+	defer c.afterRequest(ctx, err)
+
 	client, err := c.getClient()
 	if err != nil {
 		return nil, fmt.Errorf("cannot get client: %v", err)
 	}
-	path := ensureTrailingSlash(sanitizePath(key))
-	mountPath, v2, pathError := isKVv2(path, client)
-	if pathError != nil {
-		return nil, pathError
+	mountPath, v2, err := isKVv2(path, client)
+	if err != nil {
+		return nil, err
 	}
 
 	if v2 {
 		path = addPrefixToVKVPath(path, mountPath, "metadata")
 	}
 
-	secret, listError := client.Logical().List(path)
-	if listError != nil {
-		return nil, fmt.Errorf("error listing '%s': %v", path, listError)
+	secret, err := client.Logical().List(path)
+	if err != nil {
+		return nil, fmt.Errorf("error listing '%s': %v", path, err)
 	}
 	if secret == nil || secret.Data == nil {
 		return map[string]interface{}{}, nil
